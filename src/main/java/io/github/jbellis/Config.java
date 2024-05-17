@@ -12,6 +12,7 @@ public class Config {
     private final Path datasetPath;
     private final Path indexPath;
     private final int divisor;
+    private final String cohereKey;
 
     public Config() {
         Properties props = new Properties();
@@ -23,6 +24,7 @@ public class Config {
         datasetPath = Path.of(props.getProperty("dataset_location")).resolve("Cohere___wikipedia-2023-11-embed-multilingual-v3/en/0.0.0/37feace541fadccf70579e9f289c3cf8e8b186d7/wikipedia-2023-11-embed-multilingual-v3-train-%s-of-00378.arrow");
         indexPath = Path.of(props.getProperty("index_location"));
         divisor = Integer.parseInt(props.getProperty("divisor"));
+        cohereKey = props.getProperty("cohere_api_key");
     }
 
     public void validateDatasetPath() {
@@ -73,12 +75,23 @@ public class Config {
         return indexPath.resolve("coherepedia.lvq");
     }
 
+    public String getCohereKey() {
+        return cohereKey;
+    }
+
     public void validateIndexExists() {
         for (var path : List.of(annPath(), mapPath(), lvqPath(), pqVectorsPath())) {
             if (!Files.exists(path)) {
                 System.out.format("Missing index component %s%nRun buildindex first", indexPath);
                 System.exit(1);
             }
+        }
+    }
+
+    public void validateCohereKey() {
+        if (cohereKey.isEmpty()) {
+            System.out.println("Please set the cohere_api_key variable in config.properties (go to cohere.com for a free trial key)");
+            System.exit(1);
         }
     }
 }

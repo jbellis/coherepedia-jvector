@@ -48,5 +48,11 @@
             <groupId>net.openhft</groupId>
             <artifactId>chronicle-map</artifactId>
         </dependency>
+
+        <dependency>
+            <groupId>com.cohere</groupId>
+            <artifactId>cohere-java</artifactId>
+            <version>1.0.4</version>
+        </dependency>
     </dependencies>
 </project>
