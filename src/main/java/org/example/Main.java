@@ -6,12 +6,13 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Map;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.LongAdder;
-import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 import java.util.stream.IntStream;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -32,6 +33,8 @@ import io.github.jbellis.jvector.vector.VectorizationProvider;
 import io.github.jbellis.jvector.vector.types.ByteSequence;
 import io.github.jbellis.jvector.vector.types.VectorFloat;
 import io.github.jbellis.jvector.vector.types.VectorTypeSupport;
+import net.openhft.chronicle.map.ChronicleMap;
+import net.openhft.chronicle.map.ChronicleMapBuilder;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -40,6 +43,7 @@ import org.apache.arrow.vector.util.JsonStringArrayList;
 
 public class Main {
     private static final String DATASET_LOCATION = "E:/datasets/Cohere___wikipedia-2023-11-embed-multilingual-v3/en/0.0.0/37feace541fadccf70579e9f289c3cf8e8b186d7/wikipedia-2023-11-embed-multilingual-v3-train-%s-of-00378.arrow";
+    private static final String INDEX_LOCATION = "H:/coherepedia";
     private static final int N_SHARDS = 378;
     private static final int TOTAL_ROWS = 41488110;
 
@@ -51,19 +55,20 @@ public class Main {
     private static OnDiskGraphIndexWriter writer;
     private static ArrayList<ByteSequence<?>> pqVectorsList;
     private static ProductQuantization pq;
+    private static ChronicleMap<Integer, RowData> contentMap;
 
     public static void main(String[] args) throws IOException {
         log("Heap space available is %s", Runtime.getRuntime().maxMemory());
 
         // compute PQ from the first shard
-        var pqPath = Paths.get("H:/coherepedia.pq");
+        var pqPath = Paths.get(INDEX_LOCATION, "coherepedia.pq");
         if (pqPath.toFile().exists()) {
             log("Loading PQ from %s", pqPath);
             pq = ProductQuantization.load(new SimpleReader(pqPath));
         } else {
             log("Loading vectors for PQ");
             var vectors = new ArrayList<VectorFloat<?>>();
-            forEachRow(filenameFor(0), row -> vectors.add(vts.createFloatVector(row.embedding)));
+            forEachRow(filenameFor(0), (row, embedding) -> vectors.add(vts.createFloatVector(embedding)));
             log("Computing PQ");
             pq = ProductQuantization.compute(new ListRandomAccessVectorValues(vectors, DIMENSION), DIMENSION * 4 / 64, 256, false);
             pq.write(new DataOutputStream(new BufferedOutputStream(new FileOutputStream(pqPath.toFile()))));
@@ -78,7 +83,7 @@ public class Main {
                                         1.5f,
                                         1.2f,
                                         PhysicalCoreExecutor.pool(), ForkJoinPool.commonPool());
-        var indexPath = Paths.get("H:/coherepedia.index");
+        var indexPath = Paths.get(INDEX_LOCATION, "coherepedia.index");
         var writerBuilder = new OnDiskGraphIndexWriter.Builder(builder.getGraph(), indexPath)
                             .with(new InlineVectors(DIMENSION))
                             .withMapper(new OnDiskGraphIndexWriter.IdentityMapper());
@@ -88,6 +93,11 @@ public class Main {
         PQVectors pqVectors = new PQVectors(pq, pqVectorsList);
         builder.setBuildScoreProvider(BuildScoreProvider.pqBuildScoreProvider(VectorSimilarityFunction.COSINE, inlineVectors, pqVectors));
 
+        // set up Chronicle Map
+        contentMap = ChronicleMapBuilder.of((Class<Integer>) (Class) Integer.class, (Class<RowData>) (Class) RowData.class)
+                                        .averageValueSize(2048) // wild ass guess
+                                        .entries(TOTAL_ROWS)
+                                        .createPersistedTo(Path.of(INDEX_LOCATION, "coherepedia.map").toFile());
         // build the graph
         IntStream.range(0, N_SHARDS).parallel().forEach(Main::processShard);
 
@@ -95,14 +105,19 @@ public class Main {
         builder.cleanup();
         writer.write(Map.of());
         writer.close();
+        contentMap.close();
         log("Wrote index of %s vectors", builder.getGraph().size());
     }
 
     @SuppressWarnings("SynchronizeOnNonFinalField")
     private static void processShard(int shardIndex) {
         var n = new LongAdder();
-        forEachRow(filenameFor(shardIndex), row -> {
-            var vector = vts.createFloatVector(row.embedding);
+        forEachRow(filenameFor(shardIndex), (row, embedding) -> {
+            if (n.intValue() > 1000) {
+                return;
+            }
+
+            var vector = vts.createFloatVector(embedding);
             int id;
             synchronized (pqVectorsList) {
                 id = pqVectorsList.size();
@@ -116,6 +131,7 @@ public class Main {
             }
 
             builder.addGraphNode(id, vector);
+            contentMap.put(id, row);
             n.add(1);
         });
         log("Shard %d: %d rows processed", shardIndex, n.intValue());
@@ -125,7 +141,7 @@ public class Main {
         return String.format(DATASET_LOCATION, String.format("%05d", shardIndex));
     }
 
-    private static void forEachRow(String filename, Consumer<RowData> consumer) {
+    private static void forEachRow(String filename, BiConsumer<RowData, float[]> consumer) {
         BufferAllocator allocator = new RootAllocator(Long.MAX_VALUE);
 
         try (FileInputStream fileInputStream = new FileInputStream(Paths.get(filename).toFile());
@@ -134,13 +150,13 @@ public class Main {
 
             while (reader.loadNextBatch()) {
                 for (int i = 0; i < root.getRowCount(); i++) {
-                    String id = root.getVector("_id").getObject(i).toString();
+                    String url = root.getVector("url").getObject(i).toString();
                     String title = root.getVector("title").getObject(i).toString();
                     String text = root.getVector("text").getObject(i).toString();
                     var jsonList = (JsonStringArrayList<?>) root.getVector("emb").getObject(i);
                     float[] embedding = convertJsonStringArrayListToFloatArray(jsonList);
 
-                    consumer.accept(new RowData(id, title, text, embedding));
+                    consumer.accept(new RowData(url, title, text), embedding);
                 }
             }
         } catch (IOException e) {
@@ -167,7 +183,7 @@ public class Main {
         System.out.format(timestamp + ": " + message + "%n", args);
     }
 
-    private record RowData(String id, String title, String text, float[] embedding) {
+    private record RowData(String url, String title, String text) {
     }
 }
 
