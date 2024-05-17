@@ -5,13 +5,15 @@ import java.io.DataOutputStream;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.Serializable;
 import java.io.UncheckedIOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Map;
+import java.util.Properties;
 import java.util.concurrent.ForkJoinPool;
 import java.util.function.BiConsumer;
 import java.util.stream.IntStream;
@@ -41,10 +43,19 @@ import org.apache.arrow.vector.ipc.ArrowStreamReader;
 import org.apache.arrow.vector.util.JsonStringArrayList;
 
 public class Main {
-    private static final String DATASET_LOCATION = "E:/datasets/Cohere___wikipedia-2023-11-embed-multilingual-v3/en/0.0.0/37feace541fadccf70579e9f289c3cf8e8b186d7/wikipedia-2023-11-embed-multilingual-v3-train-%s-of-00378.arrow";
-    private static final String INDEX_LOCATION = "H:/coherepedia";
+    private static final Properties props = new Properties();
+    static {
+        try (FileInputStream fis = new FileInputStream("config.properties")) {
+            props.load(fis);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to load configuration properties.", e);
+        }
+    }
+    private static final Path DATASET_PATH = Path.of(props.getProperty("dataset_location")).resolve("Cohere___wikipedia-2023-11-embed-multilingual-v3/en/0.0.0/37feace541fadccf70579e9f289c3cf8e8b186d7/wikipedia-2023-11-embed-multilingual-v3-train-%s-of-00378.arrow");
+    private static final Path INDEX_PATH = Path.of(props.getProperty("index_location"));
+    private static final int DIVISOR = Integer.parseInt(props.getProperty("divisor"));
     private static final int N_SHARDS = 378;
-    private static final int TOTAL_ROWS = 41488110;
+    private static final int TOTAL_ROWS = 41488110 / DIVISOR;
 
     private static final VectorTypeSupport vts = VectorizationProvider.getInstance().getVectorTypeSupport();
 
@@ -59,9 +70,25 @@ public class Main {
     public static void main(String[] args) throws IOException {
         log("Heap space available is %s", Runtime.getRuntime().maxMemory());
 
+        // setup
+        var samplePath = Path.of(filenameFor(0));
+        if (!Files.exists(samplePath)) {
+            log("Dataset does not exist at %s%nThis probably means you need to run download.py first", samplePath);
+            System.exit(1);
+        }
+        if (!Files.exists(INDEX_PATH)) {
+            Files.createDirectory(INDEX_PATH);
+        }
+        var indexPath = INDEX_PATH.resolve("coherepedia.index");
+        var mapPath = INDEX_PATH.resolve("coherepedia.map");
+        if (Files.exists(indexPath) || Files.exists(mapPath)) {
+            log("Index already exists at %s + %s -- remove these manually to rebuild", indexPath, mapPath);
+            System.exit(1);
+        }
+
         // compute PQ from the first shard
-        var pqPath = Paths.get(INDEX_LOCATION, "coherepedia.pq");
-        var lvqPath = Paths.get(INDEX_LOCATION, "coherepedia.lvq");
+        var pqPath = INDEX_PATH.resolve("coherepedia.pq");
+        var lvqPath = INDEX_PATH.resolve("coherepedia.lvq");
         if (pqPath.toFile().exists() && lvqPath.toFile().exists()) {
             log("Loading PQ and LVQ from previously saved files");
             pq = ProductQuantization.load(new SimpleReader(pqPath));
@@ -70,12 +97,17 @@ public class Main {
             log("Loading vectors for quantization");
             var vectors = new ArrayList<VectorFloat<?>>();
             forEachRow(filenameFor(0), (row, embedding) -> vectors.add(vts.createFloatVector(embedding)));
+            var ravv = new ListRandomAccessVectorValues(vectors, DIMENSION);
             log("Computing PQ");
-            pq = ProductQuantization.compute(new ListRandomAccessVectorValues(vectors, DIMENSION), DIMENSION * 4 / 64, 256, false);
-            pq.write(new DataOutputStream(new BufferedOutputStream(new FileOutputStream(pqPath.toFile()))));
+            pq = ProductQuantization.compute(ravv, DIMENSION * 4 / 64, 256, false);
+            try (var out = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(pqPath.toFile())))) {
+                pq.write(out);
+            }
             log("Computing LVQ");
-            lvq = LocallyAdaptiveVectorQuantization.compute(new ListRandomAccessVectorValues(vectors, DIMENSION));
-            lvq.write(new DataOutputStream(new BufferedOutputStream(new FileOutputStream(lvqPath.toFile()))));
+            lvq = LocallyAdaptiveVectorQuantization.compute(ravv);
+            try (var out = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(lvqPath.toFile())))) {
+                lvq.write(out);
+            }
             log("Quantization complete");
         }
 
@@ -87,7 +119,6 @@ public class Main {
                                         1.5f,
                                         1.2f,
                                         PhysicalCoreExecutor.pool(), ForkJoinPool.commonPool());
-        var indexPath = Paths.get(INDEX_LOCATION, "coherepedia.index");
         var lvqFeature = new LVQ(lvq);
         var writerBuilder = new OnDiskGraphIndexWriter.Builder(builder.getGraph(), indexPath)
                             .with(lvqFeature)
@@ -100,9 +131,9 @@ public class Main {
 
         // set up Chronicle Map
         contentMap = ChronicleMapBuilder.of((Class<Integer>) (Class) Integer.class, (Class<RowData>) (Class) RowData.class)
-                                        .averageValueSize(2048) // wild ass guess
+                                        .averageValueSize(1024) // url (~200) + title (~50) + text (~500)
                                         .entries(TOTAL_ROWS)
-                                        .createPersistedTo(Path.of(INDEX_LOCATION, "coherepedia.map").toFile());
+                                        .createPersistedTo(mapPath.toFile());
 
         // build the graph
         IntStream.range(0, N_SHARDS).parallel().forEach(Main::processShard);
@@ -145,7 +176,7 @@ public class Main {
     }
 
     private static String filenameFor(int shardIndex) {
-        return String.format(DATASET_LOCATION, String.format("%05d", shardIndex));
+        return String.format(DATASET_PATH.toString(), String.format("%05d", shardIndex));
     }
 
     private static void forEachRow(String filename, BiConsumer<RowData, float[]> consumer) {
@@ -156,7 +187,7 @@ public class Main {
             var root = reader.getVectorSchemaRoot();
 
             while (reader.loadNextBatch()) {
-                for (int i = 0; i < root.getRowCount(); i++) {
+                for (int i = 0; i < root.getRowCount() / DIVISOR; i++) {
                     String url = root.getVector("url").getObject(i).toString();
                     String title = root.getVector("title").getObject(i).toString();
                     String text = root.getVector("text").getObject(i).toString();
@@ -185,6 +216,6 @@ public class Main {
         System.out.format(timestamp + ": " + message + "%n", args);
     }
 
-    private record RowData(String url, String title, String text) {
+    private record RowData(String url, String title, String text) implements Serializable {
     }
 }
