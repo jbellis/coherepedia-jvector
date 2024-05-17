@@ -1,4 +1,4 @@
-package org.example;
+package io.github.jbellis;
 
 import java.io.BufferedOutputStream;
 import java.io.DataOutputStream;
@@ -42,7 +42,7 @@ import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.ipc.ArrowStreamReader;
 import org.apache.arrow.vector.util.JsonStringArrayList;
 
-public class Main {
+public class BuildIndex {
     private static final Properties props = new Properties();
     static {
         try (FileInputStream fis = new FileInputStream("config.properties")) {
@@ -136,7 +136,7 @@ public class Main {
                                         .createPersistedTo(mapPath.toFile());
 
         // build the graph
-        IntStream.range(0, N_SHARDS).parallel().forEach(Main::processShard);
+        IntStream.range(0, N_SHARDS).parallel().forEach(BuildIndex::processShard);
 
         log("Running cleanup");
         builder.cleanup();
