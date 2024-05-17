@@ -20,10 +20,11 @@ import io.github.jbellis.jvector.graph.GraphIndexBuilder;
 import io.github.jbellis.jvector.graph.ListRandomAccessVectorValues;
 import io.github.jbellis.jvector.graph.disk.Feature;
 import io.github.jbellis.jvector.graph.disk.FeatureId;
-import io.github.jbellis.jvector.graph.disk.InlineVectorValues;
-import io.github.jbellis.jvector.graph.disk.InlineVectors;
+import io.github.jbellis.jvector.graph.disk.LVQ;
+import io.github.jbellis.jvector.graph.disk.LvqVectorValues;
 import io.github.jbellis.jvector.graph.disk.OnDiskGraphIndexWriter;
 import io.github.jbellis.jvector.graph.similarity.BuildScoreProvider;
+import io.github.jbellis.jvector.pq.LocallyAdaptiveVectorQuantization;
 import io.github.jbellis.jvector.pq.PQVectors;
 import io.github.jbellis.jvector.pq.ProductQuantization;
 import io.github.jbellis.jvector.util.PhysicalCoreExecutor;
@@ -32,9 +33,7 @@ import io.github.jbellis.jvector.vector.VectorizationProvider;
 import io.github.jbellis.jvector.vector.types.ByteSequence;
 import io.github.jbellis.jvector.vector.types.VectorFloat;
 import io.github.jbellis.jvector.vector.types.VectorTypeSupport;
-import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
-import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.ipc.ArrowStreamReader;
 import org.apache.arrow.vector.util.JsonStringArrayList;
 
@@ -51,23 +50,29 @@ public class Main {
     private static OnDiskGraphIndexWriter writer;
     private static ArrayList<ByteSequence<?>> pqVectorsList;
     private static ProductQuantization pq;
+    private static LocallyAdaptiveVectorQuantization lvq;
 
     public static void main(String[] args) throws IOException {
         log("Heap space available is %s", Runtime.getRuntime().maxMemory());
 
         // compute PQ from the first shard
         var pqPath = Paths.get(INDEX_LOCATION, "coherepedia.pq");
-        if (pqPath.toFile().exists()) {
-            log("Loading PQ from %s", pqPath);
+        var lvqPath = Paths.get(INDEX_LOCATION, "coherepedia.lvq");
+        if (pqPath.toFile().exists() && lvqPath.toFile().exists()) {
+            log("Loading PQ and LVQ from previously saved files");
             pq = ProductQuantization.load(new SimpleReader(pqPath));
+            lvq = LocallyAdaptiveVectorQuantization.load(new SimpleReader(lvqPath));
         } else {
-            log("Loading vectors for PQ");
+            log("Loading vectors for quantization");
             var vectors = new ArrayList<VectorFloat<?>>();
             forEachRow(filenameFor(0), (row, embedding) -> vectors.add(vts.createFloatVector(embedding)));
             log("Computing PQ");
             pq = ProductQuantization.compute(new ListRandomAccessVectorValues(vectors, DIMENSION), DIMENSION * 4 / 64, 256, false);
             pq.write(new DataOutputStream(new BufferedOutputStream(new FileOutputStream(pqPath.toFile()))));
-            log("PQ saved to %s", pqPath);
+            log("Computing LVQ");
+            lvq = LocallyAdaptiveVectorQuantization.compute(new ListRandomAccessVectorValues(vectors, DIMENSION));
+            lvq.write(new DataOutputStream(new BufferedOutputStream(new FileOutputStream(lvqPath.toFile()))));
+            log("Quantization complete");
         }
 
         // set up the index builder
@@ -79,11 +84,12 @@ public class Main {
                                         1.2f,
                                         PhysicalCoreExecutor.pool(), ForkJoinPool.commonPool());
         var indexPath = Paths.get(INDEX_LOCATION, "coherepedia.index");
+        var lvqFeature = new LVQ(lvq);
         var writerBuilder = new OnDiskGraphIndexWriter.Builder(builder.getGraph(), indexPath)
-                            .with(new InlineVectors(DIMENSION))
+                            .with(lvqFeature)
                             .withMapper(new OnDiskGraphIndexWriter.IdentityMapper());
         writer = writerBuilder.build();
-        InlineVectorValues inlineVectors = new InlineVectorValues(DIMENSION, writer);
+        var inlineVectors = new LvqVectorValues(DIMENSION, lvqFeature, writer);
         pqVectorsList = new ArrayList<>(TOTAL_ROWS);
         PQVectors pqVectors = new PQVectors(pq, pqVectorsList);
         builder.setBuildScoreProvider(BuildScoreProvider.pqBuildScoreProvider(VectorSimilarityFunction.COSINE, inlineVectors, pqVectors));
@@ -115,7 +121,7 @@ public class Main {
 
             // write the vector to the index so it can be read by rerank (call is threadsafe)
             try {
-                writer.writeInline(id, Feature.singleState(FeatureId.INLINE_VECTORS, new InlineVectors.State(vector)));
+                writer.writeInline(id, Feature.singleState(FeatureId.LVQ, new LVQ.State(lvq.encode(vector))));
             }
             catch (IOException e) {
                 throw new UncheckedIOException(e);
