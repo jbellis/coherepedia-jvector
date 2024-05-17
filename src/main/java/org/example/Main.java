@@ -6,7 +6,6 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Map;
@@ -33,8 +32,6 @@ import io.github.jbellis.jvector.vector.VectorizationProvider;
 import io.github.jbellis.jvector.vector.types.ByteSequence;
 import io.github.jbellis.jvector.vector.types.VectorFloat;
 import io.github.jbellis.jvector.vector.types.VectorTypeSupport;
-import net.openhft.chronicle.map.ChronicleMap;
-import net.openhft.chronicle.map.ChronicleMapBuilder;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -55,7 +52,6 @@ public class Main {
     private static OnDiskGraphIndexWriter writer;
     private static ArrayList<ByteSequence<?>> pqVectorsList;
     private static ProductQuantization pq;
-    private static ChronicleMap<Integer, RowData> contentMap;
 
     public static void main(String[] args) throws IOException {
         log("Heap space available is %s", Runtime.getRuntime().maxMemory());
@@ -93,11 +89,6 @@ public class Main {
         PQVectors pqVectors = new PQVectors(pq, pqVectorsList);
         builder.setBuildScoreProvider(BuildScoreProvider.pqBuildScoreProvider(VectorSimilarityFunction.COSINE, inlineVectors, pqVectors));
 
-        // set up Chronicle Map
-        contentMap = ChronicleMapBuilder.of((Class<Integer>) (Class) Integer.class, (Class<RowData>) (Class) RowData.class)
-                                        .averageValueSize(2048) // wild ass guess
-                                        .entries(TOTAL_ROWS)
-                                        .createPersistedTo(Path.of(INDEX_LOCATION, "coherepedia.map").toFile());
         // build the graph
         IntStream.range(0, N_SHARDS).parallel().forEach(Main::processShard);
 
@@ -105,7 +96,6 @@ public class Main {
         builder.cleanup();
         writer.write(Map.of());
         writer.close();
-        contentMap.close();
         log("Wrote index of %s vectors", builder.getGraph().size());
     }
 
@@ -131,7 +121,6 @@ public class Main {
             }
 
             builder.addGraphNode(id, vector);
-            contentMap.put(id, row);
             n.add(1);
         });
         log("Shard %d: %d rows processed", shardIndex, n.intValue());
