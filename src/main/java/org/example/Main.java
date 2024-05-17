@@ -131,12 +131,11 @@ public class Main {
     }
 
     private static void forEachRow(String filename, BiConsumer<RowData, float[]> consumer) {
-        BufferAllocator allocator = new RootAllocator(Long.MAX_VALUE);
-
-        try (FileInputStream fileInputStream = new FileInputStream(filename);
+        try (var allocator = new RootAllocator();
+             var fileInputStream = new FileInputStream(filename);
              var reader = new ArrowStreamReader(fileInputStream, allocator))
         {
-            VectorSchemaRoot root = reader.getVectorSchemaRoot();
+            var root = reader.getVectorSchemaRoot();
 
             while (reader.loadNextBatch()) {
                 for (int i = 0; i < root.getRowCount(); i++) {
@@ -151,10 +150,8 @@ public class Main {
                 }
             }
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            throw new UncheckedIOException(e);
         }
-
-        allocator.close();
     }
 
     private static float[] convertToFloatArray(JsonStringArrayList<?> jsonList) {
