@@ -8,12 +8,10 @@ import java.io.IOException;
 import java.io.Serializable;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Map;
-import java.util.Properties;
 import java.util.concurrent.ForkJoinPool;
 import java.util.function.BiConsumer;
 import java.util.stream.IntStream;
@@ -43,19 +41,9 @@ import org.apache.arrow.vector.ipc.ArrowStreamReader;
 import org.apache.arrow.vector.util.JsonStringArrayList;
 
 public class BuildIndex {
-    private static final Properties props = new Properties();
-    static {
-        try (FileInputStream fis = new FileInputStream("config.properties")) {
-            props.load(fis);
-        } catch (IOException e) {
-            throw new UncheckedIOException("Failed to load configuration properties.", e);
-        }
-    }
-    private static final Path DATASET_PATH = Path.of(props.getProperty("dataset_location")).resolve("Cohere___wikipedia-2023-11-embed-multilingual-v3/en/0.0.0/37feace541fadccf70579e9f289c3cf8e8b186d7/wikipedia-2023-11-embed-multilingual-v3-train-%s-of-00378.arrow");
-    private static final Path INDEX_PATH = Path.of(props.getProperty("index_location"));
-    private static final int DIVISOR = Integer.parseInt(props.getProperty("divisor"));
+    private static final Config config = new Config();
     private static final int N_SHARDS = 378;
-    private static final int TOTAL_ROWS = 41488110 / DIVISOR;
+    private static final int TOTAL_ROWS = 41488110 / config.getDivisor();
 
     private static final VectorTypeSupport vts = VectorizationProvider.getInstance().getVectorTypeSupport();
 
@@ -71,24 +59,18 @@ public class BuildIndex {
         log("Heap space available is %s", Runtime.getRuntime().maxMemory());
 
         // setup
-        var samplePath = Path.of(filenameFor(0));
-        if (!Files.exists(samplePath)) {
-            log("Dataset does not exist at %s%nThis probably means you need to run download.py first", samplePath);
-            System.exit(1);
-        }
-        if (!Files.exists(INDEX_PATH)) {
-            Files.createDirectory(INDEX_PATH);
-        }
-        var indexPath = INDEX_PATH.resolve("coherepedia.index");
-        var mapPath = INDEX_PATH.resolve("coherepedia.map");
+        config.validateDatasetPath();
+        config.maybeCreateIndexDirectory();
+        var indexPath = config.annPath();
+        var mapPath = config.mapPath();
         if (Files.exists(indexPath) || Files.exists(mapPath)) {
             log("Index already exists at %s + %s -- remove these manually to rebuild", indexPath, mapPath);
             System.exit(1);
         }
 
         // compute PQ from the first shard
-        var pqPath = INDEX_PATH.resolve("coherepedia.pq");
-        var lvqPath = INDEX_PATH.resolve("coherepedia.lvq");
+        var pqPath = config.pqPath();
+        var lvqPath = config.lvqPath();
         if (pqPath.toFile().exists() && lvqPath.toFile().exists()) {
             log("Loading PQ and LVQ from previously saved files");
             pq = ProductQuantization.load(new SimpleReader(pqPath));
@@ -96,7 +78,7 @@ public class BuildIndex {
         } else {
             log("Loading vectors for quantization");
             var vectors = new ArrayList<VectorFloat<?>>();
-            forEachRow(filenameFor(0), (row, embedding) -> vectors.add(vts.createFloatVector(embedding)));
+            forEachRow(config.filenameForShard(0), (row, embedding) -> vectors.add(vts.createFloatVector(embedding)));
             var ravv = new ListRandomAccessVectorValues(vectors, DIMENSION);
             log("Computing PQ");
             pq = ProductQuantization.compute(ravv, DIMENSION * 4 / 64, 256, false);
@@ -148,7 +130,7 @@ public class BuildIndex {
 
     @SuppressWarnings("SynchronizeOnNonFinalField")
     private static void processShard(int shardIndex) {
-        forEachRow(filenameFor(shardIndex), (row, embedding) -> {
+        forEachRow(config.filenameForShard(shardIndex), (row, embedding) -> {
             var vector = vts.createFloatVector(embedding);
             // wrap raw embedding in VectorFloat
             // id is derived from inserting into the PQ list
@@ -175,10 +157,6 @@ public class BuildIndex {
         log("Shard %d completed", shardIndex);
     }
 
-    private static String filenameFor(int shardIndex) {
-        return String.format(DATASET_PATH.toString(), String.format("%05d", shardIndex));
-    }
-
     private static void forEachRow(String filename, BiConsumer<RowData, float[]> consumer) {
         try (var allocator = new RootAllocator();
              var fileInputStream = new FileInputStream(filename);
@@ -187,7 +165,7 @@ public class BuildIndex {
             var root = reader.getVectorSchemaRoot();
 
             while (reader.loadNextBatch()) {
-                for (int i = 0; i < root.getRowCount() / DIVISOR; i++) {
+                for (int i = 0; i < root.getRowCount() / config.getDivisor(); i++) {
                     String url = root.getVector("url").getObject(i).toString();
                     String title = root.getVector("title").getObject(i).toString();
                     String text = root.getVector("text").getObject(i).toString();
