@@ -5,7 +5,6 @@ import java.io.DataOutputStream;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.Serializable;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.time.LocalTime;
@@ -112,6 +111,7 @@ public class BuildIndex {
         builder.setBuildScoreProvider(BuildScoreProvider.pqBuildScoreProvider(VectorSimilarityFunction.COSINE, inlineVectors, pqVectors));
 
         // set up Chronicle Map
+        log("Creating index for %,d rows", TOTAL_ROWS);
         contentMap = ChronicleMapBuilder.of((Class<Integer>) (Class) Integer.class, (Class<RowData>) (Class) RowData.class)
                                         .averageValueSize(1024) // url (~200) + title (~50) + text (~500)
                                         .entries(TOTAL_ROWS)
@@ -119,12 +119,22 @@ public class BuildIndex {
 
         // build the graph
         IntStream.range(0, N_SHARDS).parallel().forEach(BuildIndex::processShard);
+        // sanity checks
+        if (pqVectorsList.size() != builder.getGraph().size()) {
+            throw new IllegalStateException("PQ vectors and graph size mismatch");
+        }
+        if (contentMap.size() != builder.getGraph().size()) {
+            throw new IllegalStateException("Content map and graph size mismatch");
+        }
 
-        log("Running cleanup");
+        log("Final cleanup");
         builder.cleanup();
         writer.write(Map.of());
         writer.close();
         contentMap.close();
+        try (var pqvOut = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(config.pqVectorsPath().toFile())))) {
+            pqVectors.write(pqvOut);
+        }
         log("Wrote index of %s vectors", builder.getGraph().size());
     }
 
@@ -192,8 +202,5 @@ public class BuildIndex {
     private static void log(String message, Object... args) {
         var timestamp = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
         System.out.format(timestamp + ": " + message + "%n", args);
-    }
-
-    private record RowData(String url, String title, String text) implements Serializable {
     }
 }

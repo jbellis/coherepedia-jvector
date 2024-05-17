@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Properties;
 
 public class Config {
@@ -59,11 +60,25 @@ public class Config {
         return divisor;
     }
 
+    // cached for construction but not used for search
     public Path pqPath() {
         return indexPath.resolve("coherepedia.pq");
     }
 
+    public Path pqVectorsPath() {
+        return indexPath.resolve("coherepedia.pqv");
+    }
+
     public Path lvqPath() {
         return indexPath.resolve("coherepedia.lvq");
+    }
+
+    public void validateIndexExists() {
+        for (var path : List.of(annPath(), mapPath(), lvqPath(), pqVectorsPath())) {
+            if (!Files.exists(path)) {
+                System.out.format("Missing index component %s%nRun buildindex first", indexPath);
+                System.exit(1);
+            }
+        }
     }
 }
