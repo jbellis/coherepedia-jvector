@@ -15,7 +15,6 @@ import java.util.concurrent.ForkJoinPool;
 import java.util.function.BiConsumer;
 import java.util.stream.IntStream;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.jbellis.jvector.disk.SimpleReader;
 import io.github.jbellis.jvector.graph.GraphIndexBuilder;
 import io.github.jbellis.jvector.graph.ListRandomAccessVectorValues;
@@ -46,7 +45,6 @@ public class Main {
     private static final int TOTAL_ROWS = 41488110;
 
     private static final VectorTypeSupport vts = VectorizationProvider.getInstance().getVectorTypeSupport();
-    private static final ObjectMapper objectMapper = new ObjectMapper();
 
     private static GraphIndexBuilder builder;
     private static final int DIMENSION = 1024;
@@ -103,9 +101,9 @@ public class Main {
     @SuppressWarnings("SynchronizeOnNonFinalField")
     private static void processShard(int shardIndex) {
         forEachRow(filenameFor(shardIndex), (row, embedding) -> {
-            // vector
+            // wrap raw embedding in VectorFloat
             var vector = vts.createFloatVector(embedding);
-            // id
+            // id is derived from inserting into the PQ list
             int id;
             synchronized (pqVectorsList) {
                 id = pqVectorsList.size();
@@ -115,14 +113,14 @@ public class Main {
                 log("%,d rows processed", id);
             }
 
-            // write the vector to the index so it can be read by rerank
+            // write the vector to the index so it can be read by rerank (call is threadsafe)
             try {
                 writer.writeInline(id, Feature.singleState(FeatureId.INLINE_VECTORS, new InlineVectors.State(vector)));
             }
             catch (IOException e) {
                 throw new UncheckedIOException(e);
             }
-            // add the vector to the graph
+            // add the vector to the graph (also threadsafe)
             builder.addGraphNode(id, vector);
         });
         log("Shard %d completed", shardIndex);
@@ -135,8 +133,9 @@ public class Main {
     private static void forEachRow(String filename, BiConsumer<RowData, float[]> consumer) {
         BufferAllocator allocator = new RootAllocator(Long.MAX_VALUE);
 
-        try (FileInputStream fileInputStream = new FileInputStream(Paths.get(filename).toFile());
-             var reader = new ArrowStreamReader(fileInputStream, allocator)) {
+        try (FileInputStream fileInputStream = new FileInputStream(filename);
+             var reader = new ArrowStreamReader(fileInputStream, allocator))
+        {
             VectorSchemaRoot root = reader.getVectorSchemaRoot();
 
             while (reader.loadNextBatch()) {
@@ -144,8 +143,9 @@ public class Main {
                     String url = root.getVector("url").getObject(i).toString();
                     String title = root.getVector("title").getObject(i).toString();
                     String text = root.getVector("text").getObject(i).toString();
+                    // TODO is there a way to read floats directly instead of going through String first?
                     var jsonList = (JsonStringArrayList<?>) root.getVector("emb").getObject(i);
-                    float[] embedding = convertJsonStringArrayListToFloatArray(jsonList);
+                    float[] embedding = convertToFloatArray(jsonList);
 
                     consumer.accept(new RowData(url, title, text), embedding);
                 }
@@ -157,14 +157,10 @@ public class Main {
         allocator.close();
     }
 
-    private static float[] convertJsonStringArrayListToFloatArray(JsonStringArrayList<?> jsonList) {
+    private static float[] convertToFloatArray(JsonStringArrayList<?> jsonList) {
         float[] floatArray = new float[jsonList.size()];
         for (int i = 0; i < jsonList.size(); i++) {
-            try {
-                floatArray[i] = objectMapper.readValue(jsonList.get(i).toString(), Float.class);
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
+            floatArray[i] = Float.parseFloat(jsonList.get(i).toString());
         }
         return floatArray;
     }
