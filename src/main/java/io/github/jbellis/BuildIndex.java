@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Map;
 import java.util.concurrent.ForkJoinPool;
 import java.util.function.BiConsumer;
 import java.util.stream.IntStream;
@@ -20,7 +21,6 @@ import io.github.jbellis.jvector.graph.GraphIndexBuilder;
 import io.github.jbellis.jvector.graph.ListRandomAccessVectorValues;
 import io.github.jbellis.jvector.graph.disk.Feature;
 import io.github.jbellis.jvector.graph.disk.FeatureId;
-import io.github.jbellis.jvector.graph.disk.FusedADC;
 import io.github.jbellis.jvector.graph.disk.LVQ;
 import io.github.jbellis.jvector.graph.disk.LvqVectorValues;
 import io.github.jbellis.jvector.graph.disk.OnDiskGraphIndexWriter;
@@ -96,7 +96,7 @@ public class BuildIndex {
         // set up the index builder
         builder = new GraphIndexBuilder(null,
                                         DIMENSION,
-                                        32,
+                                        48,
                                         128,
                                         1.5f,
                                         1.2f,
@@ -104,7 +104,6 @@ public class BuildIndex {
         var lvqFeature = new LVQ(lvq);
         var writerBuilder = new OnDiskGraphIndexWriter.Builder(builder.getGraph(), indexPath)
                             .with(lvqFeature)
-                            .with(new FusedADC(builder.getGraph().maxDegree(), pq))
                             .withMapper(new OnDiskGraphIndexWriter.IdentityMapper());
         writer = writerBuilder.build();
         var inlineVectors = new LvqVectorValues(DIMENSION, lvqFeature, writer);
@@ -123,12 +122,7 @@ public class BuildIndex {
 
         log("Running cleanup");
         builder.cleanup();
-        log("Finalizing ann index");
-        try (var view = builder.getGraph().getView())
-        {
-            var supplier = Feature.singleStateFactory(FeatureId.FUSED_ADC, ordinal -> new FusedADC.State(view, pqVectors, ordinal));
-            writer.write(supplier);
-        }
+        writer.write(Map.of());
         writer.close();
         contentMap.close();
         log("Wrote index of %s vectors", builder.getGraph().size());
