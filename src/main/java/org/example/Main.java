@@ -36,7 +36,6 @@ import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.ipc.ArrowStreamReader;
-import org.apache.arrow.vector.types.pojo.Schema;
 import org.apache.arrow.vector.util.JsonStringArrayList;
 
 public class Main {
@@ -50,25 +49,25 @@ public class Main {
     private static GraphIndexBuilder builder;
     private static final int DIMENSION = 1024;
     private static OnDiskGraphIndexWriter writer;
-    private static InlineVectorValues inlineVectors;
     private static ArrayList<ByteSequence<?>> pqVectorsList;
-    private static PQVectors pqVectors;
     private static ProductQuantization pq;
 
     public static void main(String[] args) throws IOException {
+        log("Heap space available is %s", Runtime.getRuntime().maxMemory());
+
         // compute PQ from the first shard
         var pqPath = Paths.get("H:/coherepedia.pq");
         if (pqPath.toFile().exists()) {
-            System.out.format("Loading PQ from %s%n", pqPath);
+            log("Loading PQ from %s", pqPath);
             pq = ProductQuantization.load(new SimpleReader(pqPath));
         } else {
-            System.out.println("Loading vectors for PQ");
+            log("Loading vectors for PQ");
             var vectors = new ArrayList<VectorFloat<?>>();
             forEachRow(filenameFor(0), row -> vectors.add(vts.createFloatVector(row.embedding)));
-            System.out.println("Computing PQ");
+            log("Computing PQ");
             pq = ProductQuantization.compute(new ListRandomAccessVectorValues(vectors, DIMENSION), DIMENSION * 4 / 64, 256, false);
             pq.write(new DataOutputStream(new BufferedOutputStream(new FileOutputStream(pqPath.toFile()))));
-            System.out.format("PQ saved to %s%n", pqPath);
+            log("PQ saved to %s", pqPath);
         }
 
         // set up the index builder
@@ -81,22 +80,22 @@ public class Main {
                                         PhysicalCoreExecutor.pool(), ForkJoinPool.commonPool());
         var indexPath = Paths.get("H:/coherepedia.index");
         var writerBuilder = new OnDiskGraphIndexWriter.Builder(builder.getGraph(), indexPath)
-                        .with(new InlineVectors(DIMENSION))
-                        .withMapper(new OnDiskGraphIndexWriter.IdentityMapper());
+                            .with(new InlineVectors(DIMENSION))
+                            .withMapper(new OnDiskGraphIndexWriter.IdentityMapper());
         writer = writerBuilder.build();
-        inlineVectors = new InlineVectorValues(DIMENSION, writer);
+        InlineVectorValues inlineVectors = new InlineVectorValues(DIMENSION, writer);
         pqVectorsList = new ArrayList<>(TOTAL_ROWS);
-        pqVectors = new PQVectors(pq, pqVectorsList);
+        PQVectors pqVectors = new PQVectors(pq, pqVectorsList);
         builder.setBuildScoreProvider(BuildScoreProvider.pqBuildScoreProvider(VectorSimilarityFunction.COSINE, inlineVectors, pqVectors));
 
         // build the graph
-        IntStream.range(0, 4).parallel().forEach(Main::processShard);
+        IntStream.range(0, N_SHARDS).parallel().forEach(Main::processShard);
 
-        System.out.println("Running cleanup");
+        log("Running cleanup");
         builder.cleanup();
         writer.write(Map.of());
         writer.close();
-        System.out.format("Wrote index of %s vectors%n", builder.getGraph().size());
+        log("Wrote index of %s vectors", builder.getGraph().size());
     }
 
     @SuppressWarnings("SynchronizeOnNonFinalField")
@@ -119,7 +118,7 @@ public class Main {
             builder.addGraphNode(id, vector);
             n.add(1);
         });
-        System.out.format("Shard %d: %d rows processed%n", shardIndex, n.intValue());
+        log("Shard %d: %d rows processed", shardIndex, n.intValue());
     }
 
     private static String filenameFor(int shardIndex) {
@@ -131,8 +130,6 @@ public class Main {
 
         try (FileInputStream fileInputStream = new FileInputStream(Paths.get(filename).toFile());
              var reader = new ArrowStreamReader(fileInputStream, allocator)) {
-
-            Schema schema = reader.getVectorSchemaRoot().getSchema();
             VectorSchemaRoot root = reader.getVectorSchemaRoot();
 
             while (reader.loadNextBatch()) {
@@ -165,6 +162,12 @@ public class Main {
         return floatArray;
     }
 
+    private static void log(String message, Object... args) {
+        var timestamp = java.time.LocalTime.now().toString();
+        System.out.format(timestamp + ": " + message + "%n", args);
+    }
+
     private record RowData(String id, String title, String text, float[] embedding) {
     }
 }
+
