@@ -103,10 +103,6 @@ public class Main {
     private static void processShard(int shardIndex) {
         var n = new LongAdder();
         forEachRow(filenameFor(shardIndex), (row, embedding) -> {
-            if (n.intValue() > 1000) {
-                return;
-            }
-
             var vector = vts.createFloatVector(embedding);
             int id;
             synchronized (pqVectorsList) {
