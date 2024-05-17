@@ -7,10 +7,11 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Paths;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Map;
 import java.util.concurrent.ForkJoinPool;
-import java.util.concurrent.atomic.LongAdder;
 import java.util.function.BiConsumer;
 import java.util.stream.IntStream;
 
@@ -74,7 +75,7 @@ public class Main {
         // set up the index builder
         builder = new GraphIndexBuilder(null,
                                         DIMENSION,
-                                        64,
+                                        48,
                                         128,
                                         1.5f,
                                         1.2f,
@@ -101,25 +102,30 @@ public class Main {
 
     @SuppressWarnings("SynchronizeOnNonFinalField")
     private static void processShard(int shardIndex) {
-        var n = new LongAdder();
         forEachRow(filenameFor(shardIndex), (row, embedding) -> {
+            // vector
             var vector = vts.createFloatVector(embedding);
+            // id
             int id;
             synchronized (pqVectorsList) {
                 id = pqVectorsList.size();
                 pqVectorsList.add(pq.encode(vector));
             }
+            if (id % 100_000 == 0) {
+                log("%,d rows processed", id);
+            }
+
+            // write the vector to the index so it can be read by rerank
             try {
                 writer.writeInline(id, Feature.singleState(FeatureId.INLINE_VECTORS, new InlineVectors.State(vector)));
             }
             catch (IOException e) {
                 throw new UncheckedIOException(e);
             }
-
+            // add the vector to the graph
             builder.addGraphNode(id, vector);
-            n.add(1);
         });
-        log("Shard %d: %d rows processed", shardIndex, n.intValue());
+        log("Shard %d completed", shardIndex);
     }
 
     private static String filenameFor(int shardIndex) {
@@ -164,11 +170,10 @@ public class Main {
     }
 
     private static void log(String message, Object... args) {
-        var timestamp = java.time.LocalTime.now().toString();
+        var timestamp = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
         System.out.format(timestamp + ": " + message + "%n", args);
     }
 
     private record RowData(String url, String title, String text) {
     }
 }
-
