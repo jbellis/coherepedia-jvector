@@ -6,6 +6,7 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
@@ -33,6 +34,8 @@ import io.github.jbellis.jvector.vector.VectorizationProvider;
 import io.github.jbellis.jvector.vector.types.ByteSequence;
 import io.github.jbellis.jvector.vector.types.VectorFloat;
 import io.github.jbellis.jvector.vector.types.VectorTypeSupport;
+import net.openhft.chronicle.map.ChronicleMap;
+import net.openhft.chronicle.map.ChronicleMapBuilder;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.ipc.ArrowStreamReader;
 import org.apache.arrow.vector.util.JsonStringArrayList;
@@ -51,6 +54,7 @@ public class Main {
     private static ArrayList<ByteSequence<?>> pqVectorsList;
     private static ProductQuantization pq;
     private static LocallyAdaptiveVectorQuantization lvq;
+    private static ChronicleMap<Integer, RowData> contentMap;
 
     public static void main(String[] args) throws IOException {
         log("Heap space available is %s", Runtime.getRuntime().maxMemory());
@@ -94,6 +98,12 @@ public class Main {
         PQVectors pqVectors = new PQVectors(pq, pqVectorsList);
         builder.setBuildScoreProvider(BuildScoreProvider.pqBuildScoreProvider(VectorSimilarityFunction.COSINE, inlineVectors, pqVectors));
 
+        // set up Chronicle Map
+        contentMap = ChronicleMapBuilder.of((Class<Integer>) (Class) Integer.class, (Class<RowData>) (Class) RowData.class)
+                                        .averageValueSize(2048) // wild ass guess
+                                        .entries(TOTAL_ROWS)
+                                        .createPersistedTo(Path.of(INDEX_LOCATION, "coherepedia.map").toFile());
+
         // build the graph
         IntStream.range(0, N_SHARDS).parallel().forEach(Main::processShard);
 
@@ -101,14 +111,15 @@ public class Main {
         builder.cleanup();
         writer.write(Map.of());
         writer.close();
+        contentMap.close();
         log("Wrote index of %s vectors", builder.getGraph().size());
     }
 
     @SuppressWarnings("SynchronizeOnNonFinalField")
     private static void processShard(int shardIndex) {
         forEachRow(filenameFor(shardIndex), (row, embedding) -> {
-            // wrap raw embedding in VectorFloat
             var vector = vts.createFloatVector(embedding);
+            // wrap raw embedding in VectorFloat
             // id is derived from inserting into the PQ list
             int id;
             synchronized (pqVectorsList) {
@@ -128,6 +139,7 @@ public class Main {
             }
             // add the vector to the graph (also threadsafe)
             builder.addGraphNode(id, vector);
+            contentMap.put(id, row);
         });
         log("Shard %d completed", shardIndex);
     }
