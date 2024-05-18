@@ -17,4 +17,4 @@
 
 # JVM
 -Xlog:gc=info:gc.log:time
--Xmx32G
+-Xmx40G

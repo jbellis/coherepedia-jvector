@@ -61,4 +61,65 @@
             <version>2.9.4</version>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.1.0</version>
+                <configuration>
+                    <executable>${java.home}/bin/java</executable>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>buildindex</id>
+                        <configuration>
+                            <arguments>
+                                <argument>--add-exports=java.base/jdk.internal.ref=ALL-UNNAMED</argument>
+                                <argument>--add-exports=java.base/sun.nio.ch=ALL-UNNAMED</argument>
+                                <argument>--add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED</argument>
+                                <argument>--add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED</argument>
+                                <argument>--add-opens=jdk.compiler/com.sun.tools.javac=ALL-UNNAMED</argument>
+                                <argument>--add-opens=java.base/java.lang=ALL-UNNAMED</argument>
+                                <argument>--add-opens=java.base/java.lang.reflect=ALL-UNNAMED</argument>
+                                <argument>--add-opens=java.base/java.io=ALL-UNNAMED</argument>
+                                <argument>--add-opens=java.base/java.util=ALL-UNNAMED</argument>
+                                <argument>--add-modules=jdk.incubator.vector</argument>
+                                <argument>--add-opens=java.base/java.nio=ALL-UNNAMED</argument>
+                                <argument>-Xlog:gc=info:gc.log:time</argument>
+                                <argument>-Xmx40G</argument>
+                                <argument>-classpath</argument>
+                                <classpath />
+                                <argument>io.github.jbellis.BuildIndex</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>serve</id>
+                        <configuration>
+                            <arguments>
+                                <argument>--add-exports=java.base/jdk.internal.ref=ALL-UNNAMED</argument>
+                                <argument>--add-exports=java.base/sun.nio.ch=ALL-UNNAMED</argument>
+                                <argument>--add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED</argument>
+                                <argument>--add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED</argument>
+                                <argument>--add-opens=jdk.compiler/com.sun.tools.javac=ALL-UNNAMED</argument>
+                                <argument>--add-opens=java.base/java.lang=ALL-UNNAMED</argument>
+                                <argument>--add-opens=java.base/java.lang.reflect=ALL-UNNAMED</argument>
+                                <argument>--add-opens=java.base/java.io=ALL-UNNAMED</argument>
+                                <argument>--add-opens=java.base/java.util=ALL-UNNAMED</argument>
+                                <argument>--add-modules=jdk.incubator.vector</argument>
+                                <argument>--add-opens=java.base/java.nio=ALL-UNNAMED</argument>
+                                <argument>-Xlog:gc=info:gc.log:time</argument>
+                                <argument>-Xmx4G</argument>
+                                <argument>-classpath</argument>
+                                <classpath />
+                                <argument>io.github.jbellis.WebSearch</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>
