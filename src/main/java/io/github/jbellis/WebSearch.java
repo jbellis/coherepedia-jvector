@@ -80,7 +80,7 @@ public class WebSearch {
         post("/search", (req, res) -> {
             String query = req.queryParams("query");
             var q = Search.getVectorEmbedding(query);
-            StringBuilder resultsHtml = new StringBuilder("<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'><title>Search Results</title><link href='https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css' rel='stylesheet'></head><body><div class='container'><h1 class='mt-5'>Search Results</h1>");
+            StringBuilder resultsHtml = new StringBuilder("<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'><title>Search Results</title><link href='https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css' rel='stylesheet'></head><body><div class='container'><h1 class='mt-5'>Search Results for \"").append(query).append("\"</h1>");
 
             var asf = pqv.scoreFunctionFor(q, VectorSimilarityFunction.COSINE);
             var rr = index.getView().rerankerFor(q, VectorSimilarityFunction.COSINE);
