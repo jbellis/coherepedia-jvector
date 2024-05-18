@@ -21,6 +21,9 @@ import io.github.jbellis.jvector.vector.types.VectorFloat;
 import io.github.jbellis.jvector.vector.types.VectorTypeSupport;
 import net.openhft.chronicle.map.ChronicleMapBuilder;
 
+import static java.lang.Math.max;
+import static java.lang.Math.pow;
+
 public class Search {
     private static final VectorTypeSupport vts = VectorizationProvider.getInstance().getVectorTypeSupport();
     private static final Config config = new Config();
@@ -50,12 +53,19 @@ public class Search {
             var rr = index.getView().rerankerFor(q, VectorSimilarityFunction.COSINE);
             var sf = new SearchScoreProvider(asf, rr);
 
-            var results = searcher.search(sf, 5, Bits.ALL);
+            var topK = 3;
+            var results = searcher.search(sf, topK, rerankK(topK), 0.0f, 0.0f, Bits.ALL);
+            System.out.format("%nTop %d results:%n%n", topK);
             for (var ns : results.getNodes()) {
                 var row = contentMap.get(ns.node);
                 System.out.println(row.prettyPrint());
             }
         }
+    }
+
+    private static int rerankK(int topK) {
+        var overquery = max(1.0, 0.979 + 4.021 * pow(topK, 0.761)); // f(1) = 5.0, f(100) = 1.1, f(1000) = 1.0
+        return (int) (topK * overquery);
     }
 
     public static VectorFloat<?> getVectorEmbedding(String text) {
