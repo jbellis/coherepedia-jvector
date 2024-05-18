@@ -58,7 +58,7 @@ public class Search {
             System.out.format("%nTop %d results:%n%n", topK);
             for (var ns : results.getNodes()) {
                 var row = contentMap.get(ns.node);
-                System.out.println(row.prettyPrint());
+                System.out.println(row.toMarkdown());
             }
         }
     }
@@ -86,7 +86,7 @@ public class Search {
         return vts.createFloatVector(vector);
     }
 
-    private static class SimpleReaderSupplier implements ReaderSupplier {
+    static class SimpleReaderSupplier implements ReaderSupplier {
         @Override
         public SimpleReader get() {
             try {
