@@ -1,9 +1,6 @@
 package io.github.jbellis;
 
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.util.List;
+import static spark.Spark.*;
 
 import com.cohere.api.Cohere;
 import com.cohere.api.requests.EmbedRequest;
@@ -19,53 +16,75 @@ import io.github.jbellis.jvector.vector.VectorSimilarityFunction;
 import io.github.jbellis.jvector.vector.VectorizationProvider;
 import io.github.jbellis.jvector.vector.types.VectorFloat;
 import io.github.jbellis.jvector.vector.types.VectorTypeSupport;
+import net.openhft.chronicle.map.ChronicleMap;
 import net.openhft.chronicle.map.ChronicleMapBuilder;
 
-import static java.lang.Math.max;
-import static java.lang.Math.pow;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.util.List;
 
-public class Search {
+public class WebSearch {
     private static final VectorTypeSupport vts = VectorizationProvider.getInstance().getVectorTypeSupport();
     private static final Config config = new Config();
 
-    public static void main(String[] args) throws IOException {
+    private static OnDiskGraphIndex index;
+    private static SimpleReader pqvReader;
+    private static ChronicleMap<Integer, RowData> contentMap;
+    private static PQVectors pqv;
+    private static GraphSearcher searcher;
+    private static int PORT = 4567;
+
+    static {
+        try {
+            initializeResources();
+        } catch (IOException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+
+    private static void initializeResources() throws IOException {
         config.validateIndexExists();
         config.validateCohereKey();
 
-        // Prompt user for a query string
-        System.out.println("Search for: ");
-        String query = System.console().readLine();
+        System.out.println("Loading index");
+        index = OnDiskGraphIndex.load(new SimpleReaderSupplier());
+        pqvReader = new SimpleReader(config.pqVectorsPath());
+        contentMap = ChronicleMapBuilder.of((Class<Integer>) (Class) Integer.class, (Class<RowData>) (Class) RowData.class)
+                                        .createPersistedTo(config.mapPath().toFile());
+        pqv = PQVectors.load(pqvReader);
+        searcher = new GraphSearcher(index);
+    }
 
-        // ask Cohere to embed the query
-        var q = getVectorEmbedding(query);
+    public static void main(String[] args) {
+        port(PORT); // Default port for Spark
+        System.out.format("Listening on port %s%n", PORT);
 
-        // open the index and search for the query
-        try (var index = OnDiskGraphIndex.load(new SimpleReaderSupplier());
-             var pqvReader = new SimpleReader(config.pqVectorsPath());
-             var contentMap = ChronicleMapBuilder.of((Class<Integer>) (Class) Integer.class, (Class<RowData>) (Class) RowData.class)
-                                                 .createPersistedTo(config.mapPath().toFile()))
-        {
-            var pqv = PQVectors.load(pqvReader);
+        get("/", (req, res) -> {
+            return "<form action='/search' method='post'>" +
+                   "  <input type='text' name='query'>" +
+                   "  <input type='submit' value='Search'>" +
+                   "</form>";
+        });
 
-            var searcher = new GraphSearcher(index);
+        post("/search", (req, res) -> {
+            String query = req.queryParams("query");
+            var q = getVectorEmbedding(query);
+            StringBuilder resultsHtml = new StringBuilder("<h1>Search Results</h1>");
 
             var asf = pqv.scoreFunctionFor(q, VectorSimilarityFunction.COSINE);
             var rr = index.getView().rerankerFor(q, VectorSimilarityFunction.COSINE);
             var sf = new SearchScoreProvider(asf, rr);
 
             var topK = 3;
-            var results = searcher.search(sf, topK, rerankK(topK), 0.0f, 0.0f, Bits.ALL);
-            System.out.format("%nTop %d results:%n%n", topK);
+            var results = searcher.search(sf, topK, Search.rerankK(topK), 0.0f, 0.0f, Bits.ALL);
             for (var ns : results.getNodes()) {
                 var row = contentMap.get(ns.node);
-                System.out.println(row.prettyPrint());
+                resultsHtml.append("<p>").append(row.prettyPrint()).append("</p>");
             }
-        }
-    }
 
-    static int rerankK(int topK) {
-        var overquery = max(1.0, 0.979 + 4.021 * pow(topK, 0.761)); // f(1) = 5.0, f(100) = 1.1, f(1000) = 1.0
-        return (int) (topK * overquery);
+            return resultsHtml.toString();
+        });
     }
 
     public static VectorFloat<?> getVectorEmbedding(String text) {
@@ -91,8 +110,7 @@ public class Search {
         public SimpleReader get() {
             try {
                 return new SimpleReader(config.annPath());
-            }
-            catch (FileNotFoundException e) {
+            } catch (FileNotFoundException e) {
                 throw new UncheckedIOException(e);
             }
         }
