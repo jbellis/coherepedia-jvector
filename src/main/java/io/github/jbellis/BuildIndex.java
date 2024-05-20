@@ -93,12 +93,12 @@ public class BuildIndex {
         }
 
         // set up the index builder
-        builder = new GraphIndexBuilder(null,
+        builder = new GraphIndexBuilder(null, // we'll set the score provider later
                                         DIMENSION,
-                                        48,
-                                        128,
-                                        1.5f,
-                                        1.2f,
+                                        48,   // degree
+                                        128,  // search width during construction
+                                        1.2f, // allow exceeding degree by this much temporarily
+                                        1.2f, // alpha diversity parameter
                                         PhysicalCoreExecutor.pool(), ForkJoinPool.commonPool());
         var lvqFeature = new LVQ(lvq);
         var writerBuilder = new OnDiskGraphIndexWriter.Builder(builder.getGraph(), indexPath)
@@ -113,7 +113,7 @@ public class BuildIndex {
         // set up Chronicle Map
         log("Creating index for %,d rows", TOTAL_ROWS);
         contentMap = ChronicleMapBuilder.of((Class<Integer>) (Class) Integer.class, (Class<RowData>) (Class) RowData.class)
-                                        .averageValueSize(1024) // url (~200) + title (~50) + text (~500)
+                                        .averageValueSize(768) // url (~200) + title (~50) + text (~500)
                                         .entries(TOTAL_ROWS)
                                         .createPersistedTo(mapPath.toFile());
 
@@ -129,12 +129,18 @@ public class BuildIndex {
 
         log("Final cleanup");
         builder.cleanup();
+
+        log("Writing edge lists");
         writer.write(Map.of());
+
         writer.close();
         contentMap.close();
+
+        log("Writing compressed vectors");
         try (var pqvOut = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(config.pqVectorsPath().toFile())))) {
             pqVectors.write(pqvOut);
         }
+
         log("Wrote index of %s vectors", builder.getGraph().size());
     }
 

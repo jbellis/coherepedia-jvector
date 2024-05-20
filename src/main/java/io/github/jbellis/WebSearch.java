@@ -82,12 +82,20 @@ public class WebSearch {
             var q = Search.getVectorEmbedding(query);
             StringBuilder resultsHtml = new StringBuilder("<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'><title>Search Results</title><link href='https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css' rel='stylesheet'></head><body><div class='container'><h1 class='mt-5'>Search Results for \"").append(query).append("\"</h1>");
 
+            // approximate score function for the first pass
             var asf = pqv.scoreFunctionFor(q, VectorSimilarityFunction.COSINE);
+            // reranking function for the second pass
             var rr = index.getView().rerankerFor(q, VectorSimilarityFunction.COSINE);
+            // bundle them together
             var sf = new SearchScoreProvider(asf, rr);
 
-            var topK = 3;
+            // perform the search
+            var topK = 5;
+            long start = System.nanoTime();
             var results = searcher.search(sf, topK, Search.rerankK(topK), 0.0f, 0.0f, Bits.ALL);
+            System.out.format("Search took %,d ms%n", (System.nanoTime() - start) / 1_000_000L);
+
+            // render the results
             resultsHtml.append("<ul class='list-group mt-3'>");
             for (var ns : results.getNodes()) {
                 var row = contentMap.get(ns.node);
