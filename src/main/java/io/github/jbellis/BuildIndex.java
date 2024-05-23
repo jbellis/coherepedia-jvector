@@ -54,6 +54,7 @@ public class BuildIndex {
     private static LocallyAdaptiveVectorQuantization lvq;
     private static ChronicleMap<Integer, RowData> contentMap;
 
+    @SuppressWarnings({"unchecked", "rawtypes"})
     public static void main(String[] args) throws IOException {
         log("Heap space available is %s", Runtime.getRuntime().maxMemory());
 

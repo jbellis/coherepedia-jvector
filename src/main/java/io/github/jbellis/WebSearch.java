@@ -23,7 +23,6 @@ public class WebSearch {
     private static final Config config = new Config();
 
     private static OnDiskGraphIndex index;
-    private static SimpleReader pqvReader;
     private static ChronicleMap<Integer, RowData> contentMap;
     private static PQVectors pqv;
     private static GraphSearcher searcher;
@@ -37,16 +36,18 @@ public class WebSearch {
         }
     }
 
+    @SuppressWarnings({"rawtypes", "unchecked"})
     private static void initializeResources() throws IOException {
         config.validateIndexExists();
         config.validateCohereKey();
 
         System.out.println("Loading index");
         index = OnDiskGraphIndex.load(new Search.SimpleReaderSupplier());
-        pqvReader = new SimpleReader(config.pqVectorsPath());
+        try (var pqvReader = new SimpleReader(config.pqVectorsPath())) {
+            pqv = PQVectors.load(pqvReader);
+        }
         contentMap = ChronicleMapBuilder.of((Class<Integer>) (Class) Integer.class, (Class<RowData>) (Class) RowData.class)
                                         .createPersistedTo(config.mapPath().toFile());
-        pqv = PQVectors.load(pqvReader);
         searcher = new GraphSearcher(index);
     }
 
@@ -78,9 +79,9 @@ public class WebSearch {
         });
 
         post("/search", (req, res) -> {
+            // ask Cohere to turn the search string into a vector embedding
             String query = req.queryParams("query");
             var q = Search.getVectorEmbedding(query);
-            StringBuilder resultsHtml = new StringBuilder("<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'><title>Search Results</title><link href='https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css' rel='stylesheet'></head><body><div class='container'><h1 class='mt-5'>Search Results for \"").append(query).append("\"</h1>");
 
             // approximate score function for the first pass
             var asf = pqv.scoreFunctionFor(q, VectorSimilarityFunction.COSINE);
@@ -92,10 +93,16 @@ public class WebSearch {
             // perform the search
             var topK = 5;
             long start = System.nanoTime();
-            var results = searcher.search(sf, topK, Search.rerankK(topK), 0.0f, 0.0f, Bits.ALL);
+            var results = searcher.search(sf, // score function
+                                          topK, // this many final results
+                                          Search.rerankK(topK), // out of this many approximate results
+                                          0.0f, // minimum similarity threshold, out of scope for this example
+                                          0.0f, // rerankFloor, out of scope for this example
+                                          Bits.ALL); // IDs to allow in the results
             System.out.format("Search took %,d ms%n", (System.nanoTime() - start) / 1_000_000L);
 
             // render the results
+            StringBuilder resultsHtml = new StringBuilder("<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'><title>Search Results</title><link href='https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css' rel='stylesheet'></head><body><div class='container'><h1 class='mt-5'>Search Results for \"").append(query).append("\"</h1>");
             resultsHtml.append("<ul class='list-group mt-3'>");
             for (var ns : results.getNodes()) {
                 var row = contentMap.get(ns.node);
