@@ -41,7 +41,7 @@ public class WebSearch {
         config.validateIndexExists();
         config.validateCohereKey();
 
-        System.out.println("Loading index");
+        System.out.printf("Loading index from %s%n", config.annPath());
         index = OnDiskGraphIndex.load(new Search.SimpleReaderSupplier());
         try (var pqvReader = new SimpleReader(config.pqVectorsPath())) {
             pqv = PQVectors.load(pqvReader);

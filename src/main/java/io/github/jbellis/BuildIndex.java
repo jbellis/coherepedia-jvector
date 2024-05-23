@@ -98,7 +98,7 @@ public class BuildIndex {
                                         DIMENSION,
                                         48,   // degree
                                         128,  // search width during construction
-                                        1.2f, // allow exceeding degree by this much temporarily
+                                        1.5f, // allow exceeding degree by this much temporarily
                                         1.2f, // alpha diversity parameter
                                         PhysicalCoreExecutor.pool(), ForkJoinPool.commonPool());
         var lvqFeature = new LVQ(lvq);
