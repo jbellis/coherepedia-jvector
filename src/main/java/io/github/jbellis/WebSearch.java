@@ -74,6 +74,11 @@ public class WebSearch {
                    "            <button type='submit' class='btn btn-primary'>Search</button>" +
                    "        </form>" +
                    "    </div>" +
+                    "    <footer class='mt-5 bg-dark text-white py-3'>" +
+                    "        <div class='container'>" +
+                    "            <p class='mb-0'><a href='https://huggingface.co/datasets/Cohere/wikipedia-2023-11-embed-multilingual-v3' class='text-white' style='text-decoration: underline;'>Cohere V3 Wikipedia dataset</a> built with <a href='https://github.com/jbellis/jvector' class='text-white' style='text-decoration: underline;'>JVector</a></p>" +
+                    "        </div>" +
+                    "    </footer>" +
                    "</body>" +
                    "</html>";
         });
