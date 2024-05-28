@@ -41,7 +41,7 @@
         <dependency>
             <groupId>io.github.jbellis</groupId>
             <artifactId>jvector</artifactId>
-            <version>3.0.0-beta.10</version>
+            <version>3.0.0-beta.11</version>
         </dependency>
 
         <dependency>
@@ -88,7 +88,7 @@
                                 <argument>--add-modules=jdk.incubator.vector</argument>
                                 <argument>--add-opens=java.base/java.nio=ALL-UNNAMED</argument>
                                 <argument>-Xlog:gc=info:gc.log:time</argument>
-                                <argument>-Xmx40G</argument>
+                                <argument>-Xmx36G</argument>
                                 <argument>-classpath</argument>
                                 <classpath />
                                 <argument>io.github.jbellis.BuildIndex</argument>

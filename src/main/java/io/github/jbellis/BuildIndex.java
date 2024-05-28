@@ -21,7 +21,6 @@ import io.github.jbellis.jvector.graph.ListRandomAccessVectorValues;
 import io.github.jbellis.jvector.graph.disk.Feature;
 import io.github.jbellis.jvector.graph.disk.FeatureId;
 import io.github.jbellis.jvector.graph.disk.LVQ;
-import io.github.jbellis.jvector.graph.disk.LvqVectorValues;
 import io.github.jbellis.jvector.graph.disk.OnDiskGraphIndexWriter;
 import io.github.jbellis.jvector.graph.similarity.BuildScoreProvider;
 import io.github.jbellis.jvector.pq.LocallyAdaptiveVectorQuantization;
@@ -80,36 +79,40 @@ public class BuildIndex {
             var vectors = new ArrayList<VectorFloat<?>>();
             forEachRow(config.filenameForShard(0), (row, embedding) -> vectors.add(vts.createFloatVector(embedding)));
             var ravv = new ListRandomAccessVectorValues(vectors, DIMENSION);
+
             log("Computing PQ");
-            pq = ProductQuantization.compute(ravv, DIMENSION * 4 / 64, 256, false);
+            pq = ProductQuantization.compute(ravv, // the vector source
+                                             DIMENSION * 4 / 64, // number of subquantizers = number of bytes in the output
+                                             256, // number of clusters per subquantizer
+                                             false); // don't center the vectors first since we're using angular similarity
             try (var out = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(pqPath.toFile())))) {
                 pq.write(out);
             }
+
             log("Computing LVQ");
             lvq = LocallyAdaptiveVectorQuantization.compute(ravv);
             try (var out = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(lvqPath.toFile())))) {
                 lvq.write(out);
             }
+
             log("Quantization complete");
         }
 
         // set up the index builder
-        builder = new GraphIndexBuilder(null, // we'll set the score provider later
+        pqVectorsList = new ArrayList<>(TOTAL_ROWS);
+        PQVectors pqVectors = new PQVectors(pq, pqVectorsList);
+        builder = new GraphIndexBuilder(BuildScoreProvider.pqBuildScoreProvider(VectorSimilarityFunction.COSINE, pqVectors),
                                         DIMENSION,
                                         48,   // degree
                                         128,  // search width during construction
-                                        1.5f, // allow exceeding degree by this much temporarily
-                                        1.2f, // alpha diversity parameter
+                                        1.2f, // allow exceeding degree by this much temporarily
+                                        1.2f, // diversity "alpha" parameter
                                         PhysicalCoreExecutor.pool(), ForkJoinPool.commonPool());
         var lvqFeature = new LVQ(lvq);
         var writerBuilder = new OnDiskGraphIndexWriter.Builder(builder.getGraph(), indexPath)
                             .with(lvqFeature)
                             .withMapper(new OnDiskGraphIndexWriter.IdentityMapper());
         writer = writerBuilder.build();
-        var inlineVectors = new LvqVectorValues(DIMENSION, lvqFeature, writer);
-        pqVectorsList = new ArrayList<>(TOTAL_ROWS);
-        PQVectors pqVectors = new PQVectors(pq, pqVectorsList);
-        builder.setBuildScoreProvider(BuildScoreProvider.pqBuildScoreProvider(VectorSimilarityFunction.COSINE, inlineVectors, pqVectors));
 
         // set up Chronicle Map
         log("Creating index for %,d rows", TOTAL_ROWS);
