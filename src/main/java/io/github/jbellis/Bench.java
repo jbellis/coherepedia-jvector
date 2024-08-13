@@ -16,12 +16,9 @@ import io.github.jbellis.jvector.vector.types.VectorTypeSupport;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.util.Random;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
-
-import static java.lang.Math.max;
-import static java.lang.Math.pow;
 
 public class Bench {
     private static final VectorTypeSupport vts = VectorizationProvider.getInstance().getVectorTypeSupport();
@@ -39,40 +36,34 @@ public class Bench {
 
             long startTime = System.nanoTime();
             int searches = 1_000;
+            var reranked = new AtomicInteger();
             IntStream.range(0, searches).parallel().forEach(__ -> {
                 var searcher = new GraphSearcher(index);
-                var q = randomVector(pqv.getOriginalSize() / Float.BYTES);
+                var q = randomVector(pqv);
 
                 var asf = pqv.scoreFunctionFor(q, VectorSimilarityFunction.COSINE);
                 var rr = index.getView().rerankerFor(q, VectorSimilarityFunction.COSINE);
                 var sf = new SearchScoreProvider(asf, rr);
 
-                var topK = 10;
-                searcher.search(sf, topK, rerankK(topK), 0.0f, 0.0f, Bits.ALL);
+                var topK = 100;
+                var res = searcher.search(sf, topK, Search.rerankK(topK), 0.0f, 0.0f, Bits.ALL);
+                reranked.addAndGet(res.getRerankedCount());
             });
 
             long endTime = System.nanoTime();
             long duration = endTime - startTime;
             System.out.printf("Average search duration: %.2f ms%n", (double) duration / (searches * 1_000_000L));
+            System.out.printf("Average reranked count: %.1f%n", (double) reranked.get() / searches);
         }
     }
 
-    static int rerankK(int topK) {
-        var overquery = max(1.0, 0.979 + 4.021 * pow(topK, 0.761)); // f(1) = 5.0, f(100) = 1.1, f(1000) = 1.0
-        return (int) (topK * overquery);
-    }
-
-    static VectorFloat<?> randomVector(int dim) {
-        Random R = ThreadLocalRandom.current();
-        VectorFloat<?> vec = vts.createFloatVector(dim);
-        for (int i = 0; i < dim; i++) {
-            vec.set(i, R.nextFloat());
-            if (R.nextBoolean()) {
-                vec.set(i, -vec.get(i));
-            }
-        }
-        VectorUtil.l2normalize(vec);
-        return vec;
+    // don't use random vectors, they don't share the same distribution as real ones
+    static VectorFloat<?> randomVector(PQVectors pqv) {
+        var R = ThreadLocalRandom.current();
+        VectorFloat<?> v = vts.createFloatVector(pqv.getOriginalSize() / Float.BYTES);
+        pqv.getProductQuantization().decode(pqv.get(R.nextInt(pqv.count())), v);
+        VectorUtil.l2normalize(v);
+        return v;
     }
 
     static class SimpleReaderSupplier implements ReaderSupplier {
