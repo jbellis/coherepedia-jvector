@@ -63,8 +63,8 @@ public class Search {
         }
     }
 
-    static int rerankK(int topK) {
-        var overquery = max(1.0, 0.979 + 4.021 * pow(topK, 0.761)); // f(1) = 5.0, f(100) = 1.1, f(1000) = 1.0
+    public static int rerankK(int topK) {
+        var overquery = max(1.0, 0.979 + 4.021 * pow(topK, -0.761)); // f(1) = 5.0, f(100) = 1.1, f(1000) = 1.0
         return (int) (topK * overquery);
     }
 
