@@ -22,6 +22,7 @@ import io.github.jbellis.jvector.graph.disk.Feature;
 import io.github.jbellis.jvector.graph.disk.FeatureId;
 import io.github.jbellis.jvector.graph.disk.LVQ;
 import io.github.jbellis.jvector.graph.disk.OnDiskGraphIndexWriter;
+import io.github.jbellis.jvector.graph.disk.OrdinalMapper;
 import io.github.jbellis.jvector.graph.similarity.BuildScoreProvider;
 import io.github.jbellis.jvector.pq.LocallyAdaptiveVectorQuantization;
 import io.github.jbellis.jvector.pq.PQVectors;
@@ -111,7 +112,7 @@ public class BuildIndex {
         var lvqFeature = new LVQ(lvq);
         var writerBuilder = new OnDiskGraphIndexWriter.Builder(builder.getGraph(), indexPath)
                             .with(lvqFeature)
-                            .withMapper(new OnDiskGraphIndexWriter.IdentityMapper());
+                            .withMapper(new OrdinalMapper.IdentityMapper(builder.getGraph().size() - 1));
         writer = writerBuilder.build();
 
         // set up Chronicle Map
