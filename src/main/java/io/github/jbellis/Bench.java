@@ -16,6 +16,7 @@ import io.github.jbellis.jvector.vector.types.VectorTypeSupport;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.Random;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
@@ -35,14 +36,16 @@ public class Bench {
             System.out.println("Loaded index");
 
             long startTime = System.nanoTime();
-            int searches = 1_000;
+            int searches = 100_000;
             var reranked = new AtomicInteger();
             IntStream.range(0, searches).parallel().forEach(__ -> {
                 var searcher = new GraphSearcher(index);
-                var q = randomVector(pqv);
+                var q = randomVector(pqv.getOriginalSize() / Float.BYTES);
 
                 var asf = pqv.scoreFunctionFor(q, VectorSimilarityFunction.COSINE);
-                var rr = index.getView().rerankerFor(q, VectorSimilarityFunction.COSINE);
+                var view = (OnDiskGraphIndex.View) searcher.getView();
+                var rr = view.lvqRerankerFor(q, VectorSimilarityFunction.COSINE);
+//                var rr = view.rerankerFor(q, VectorSimilarityFunction.COSINE);
                 var sf = new SearchScoreProvider(asf, rr);
 
                 var topK = 100;
@@ -57,13 +60,17 @@ public class Bench {
         }
     }
 
-    // don't use random vectors, they don't share the same distribution as real ones
-    static VectorFloat<?> randomVector(PQVectors pqv) {
-        var R = ThreadLocalRandom.current();
-        VectorFloat<?> v = vts.createFloatVector(pqv.getOriginalSize() / Float.BYTES);
-        pqv.getProductQuantization().decode(pqv.get(R.nextInt(pqv.count())), v);
-        VectorUtil.l2normalize(v);
-        return v;
+    static VectorFloat<?> randomVector(int dim) {
+        Random R = ThreadLocalRandom.current();
+        VectorFloat<?> vec = vts.createFloatVector(dim);
+        for (int i = 0; i < dim; i++) {
+            vec.set(i, R.nextFloat());
+            if (R.nextBoolean()) {
+                vec.set(i, -vec.get(i));
+            }
+        }
+        VectorUtil.l2normalize(vec);
+        return vec;
     }
 
     static class SimpleReaderSupplier implements ReaderSupplier {
