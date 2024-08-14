@@ -80,7 +80,7 @@ public class Config {
     }
 
     public void validateIndexExists() {
-        for (var path : List.of(annPath(), mapPath(), lvqPath(), pqVectorsPath())) {
+        for (var path : List.of(annPath(), pqVectorsPath())) {
             if (!Files.exists(path)) {
                 System.out.format("Missing index component %s%nRun buildindex first", indexPath);
                 System.exit(1);
