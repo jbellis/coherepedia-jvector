@@ -1,5 +1,6 @@
 package io.github.jbellis;
 
+import io.github.jbellis.jvector.disk.MemorySegmentReader;
 import io.github.jbellis.jvector.disk.ReaderSupplier;
 import io.github.jbellis.jvector.disk.SimpleReader;
 import io.github.jbellis.jvector.graph.GraphSearcher;
@@ -29,7 +30,7 @@ public class Bench {
         config.validateIndexExists();
 
         // open the index and search for the query
-        try (var index = OnDiskGraphIndex.load(new SimpleReaderSupplier());
+        try (var index = OnDiskGraphIndex.load(new MemorySegmentReader.Supplier(config.annPath()));
              var pqvReader = new SimpleReader(config.pqVectorsPath()))
         {
             var pqv = PQVectors.load(pqvReader);
@@ -71,17 +72,5 @@ public class Bench {
         }
         VectorUtil.l2normalize(vec);
         return vec;
-    }
-
-    static class SimpleReaderSupplier implements ReaderSupplier {
-        @Override
-        public SimpleReader get() {
-            try {
-                return new SimpleReader(config.annPath());
-            }
-            catch (FileNotFoundException e) {
-                throw new UncheckedIOException(e);
-            }
-        }
     }
 }
